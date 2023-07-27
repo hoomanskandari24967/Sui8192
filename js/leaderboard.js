@@ -16,6 +16,8 @@ const {
   COLUMNS,
   spaceAt
 } = require('./board');
+const contest = require('./contest');
+const { add } = require("./queue");
 
 let cachedLeaderboardAddress;
 let leaderboardObject;
@@ -216,7 +218,7 @@ const historyHTML = (moveIndex, totalMoves, histories) => {
     return completeHTML;
 };
 
-const load = async (network, leaderboardAddress, force = false) => {
+const load = async (network, leaderboardAddress, force = false, contestDay = 1) => {
     cachedLeaderboardAddress = leaderboardAddress
     const loadingLeaderboard = eById("loading-leaderboard");
     if (!loadingLeaderboard) return;
@@ -231,31 +233,57 @@ const load = async (network, leaderboardAddress, force = false) => {
     addClass(eById("more-leaderboard"), "hidden");
 
     page = 1;
-    leaderboardObject = await get(network);
-
     addClass(eById("loading-leaderboard"), "hidden");
 
     const leaderboardList = eById("leaderboard-list");
     leaderboardList.innerHTML = "";
 
-    const games = await topGames(network, true);
+    let games, timestamp;
+    if (contestDay) {
+      const leaderboard = await contest.getLeaders(contestDay, network);
+      games = leaderboard.leaders;
+      timestamp = leaderboard.timestamp;
+    } else {
+      leaderboardObject = await get(network);
+      games = await topGames(network, true);
+    }
+
+    if (games.length > 0) {
+      addClass(eByClass('no-games-leader'), 'hidden')
+    } else {
+      removeClass(eByClass('no-games-leader'), 'hidden')
+    }
+
     const best = eById("best");
     if (best) {
       best.innerHTML = games[0]?.score || 0;
     }
-    setOnClick(eById("more-leaderboard"), () => loadNextPage(network));
+    setOnClick(eById("more-leaderboard"), () => loadNextPage(network, !!contestDay, timestamp));
 
-    await loadNextPage(network);
+    await loadNextPage(network, contestDay, !!contestDay, timestamp);
 };
 
-const loadNextPage = async (network) => {
+const loadNextPage = async (network, contestDay, contestLeaderboard, timestamp) => {
     if (loadingNextPage) return;
 
     loadingNextPage = true;
 
     const leaderboardList = eById("leaderboard-list");
     const currentMax = page * perPage;
-    const games = await topGames(network);
+
+    let games;
+    if (contestLeaderboard) {
+      const leaderboard = await contest.getLeaders(contestDay, network, timestamp);
+      games = leaderboard.leaders;
+      if (games.length === 0) {
+        removeClass(eById("no-contest-games"), 'hidden')
+      } else {
+        addClass(eById("no-contest-games"), 'hidden')
+      }
+    } else {
+      games = await topGames(network, true);
+    }
+
     const pageMax = Math.min(games.length, currentMax);
     for (let i = (page - 1) * perPage; i < pageMax; ++i) {
         const { gameId, topTile, score, leaderAddress } = games[i];  
@@ -281,8 +309,9 @@ const loadNextPage = async (network) => {
       
       <div class='leaderboard-name flex-1 '>
         <div title='${leaderAddress}'>
-          ${name === leaderAddress ? truncateMiddle(leaderAddress) : name}
+          ${name === leaderAddress ? truncateMiddle(leaderAddress, 4) : name}
         </div>
+        <div class='chevron'>⌄</div>
       </div>     
     `;
 
